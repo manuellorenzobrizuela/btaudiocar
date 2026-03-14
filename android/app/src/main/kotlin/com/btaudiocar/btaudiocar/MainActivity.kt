@@ -8,7 +8,10 @@ import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
 import android.content.pm.PackageManager
+import android.media.AudioAttributes
+import android.media.AudioFormat
 import android.media.AudioManager
+import android.media.AudioTrack
 import android.os.Build
 import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
@@ -25,6 +28,8 @@ class MainActivity : FlutterActivity(), MethodChannel.MethodCallHandler {
     private var scoReceiver: BroadcastReceiver? = null
     private var scoActive = false
     private var scoMonitorReceiver: BroadcastReceiver? = null
+    private var silenceTrack: AudioTrack? = null
+    private var silenceThread: Thread? = null
 
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
@@ -84,6 +89,7 @@ class MainActivity : FlutterActivity(), MethodChannel.MethodCallHandler {
                     AudioManager.SCO_AUDIO_STATE_CONNECTED -> {
                         receiverFired = true
                         scoActive = true
+                        startSilenceLoop()
                         startScoMonitor()
                         result.success(mapOf(
                             "success" to true,
@@ -119,6 +125,7 @@ class MainActivity : FlutterActivity(), MethodChannel.MethodCallHandler {
                 receiverFired = true
                 if (am.isBluetoothScoOn) {
                     scoActive = true
+                    startSilenceLoop()
                     startScoMonitor()
                     result.success(mapOf(
                         "success" to true,
@@ -138,7 +145,54 @@ class MainActivity : FlutterActivity(), MethodChannel.MethodCallHandler {
         }, 5000)
     }
 
-    // Monitor SCO disconnections (e.g. after a phone call) and re-connect
+    // Play silence on STREAM_VOICE_CALL to keep SCO channel alive
+    private fun startSilenceLoop() {
+        stopSilenceLoop()
+        val sampleRate = 8000
+        val bufferSize = AudioTrack.getMinBufferSize(
+            sampleRate,
+            AudioFormat.CHANNEL_OUT_MONO,
+            AudioFormat.ENCODING_PCM_16BIT
+        )
+
+        silenceTrack = AudioTrack.Builder()
+            .setAudioAttributes(
+                AudioAttributes.Builder()
+                    .setUsage(AudioAttributes.USAGE_VOICE_COMMUNICATION)
+                    .setContentType(AudioAttributes.CONTENT_TYPE_SPEECH)
+                    .build()
+            )
+            .setAudioFormat(
+                AudioFormat.Builder()
+                    .setEncoding(AudioFormat.ENCODING_PCM_16BIT)
+                    .setSampleRate(sampleRate)
+                    .setChannelMask(AudioFormat.CHANNEL_OUT_MONO)
+                    .build()
+            )
+            .setBufferSizeInBytes(bufferSize)
+            .setTransferMode(AudioTrack.MODE_STREAM)
+            .build()
+
+        silenceTrack?.play()
+        val silence = ByteArray(bufferSize)
+        silenceThread = Thread {
+            while (scoActive) {
+                silenceTrack?.write(silence, 0, silence.size)
+                try { Thread.sleep(100) } catch (_: InterruptedException) { break }
+            }
+        }
+        silenceThread?.start()
+    }
+
+    private fun stopSilenceLoop() {
+        scoActive = false
+        silenceThread?.interrupt()
+        silenceThread = null
+        silenceTrack?.stop()
+        silenceTrack?.release()
+        silenceTrack = null
+    }
+
     private fun startScoMonitor() {
         stopScoMonitor()
         scoMonitorReceiver = object : BroadcastReceiver() {
@@ -149,7 +203,6 @@ class MainActivity : FlutterActivity(), MethodChannel.MethodCallHandler {
                     AudioManager.SCO_AUDIO_STATE_ERROR
                 )
                 if (state == AudioManager.SCO_AUDIO_STATE_DISCONNECTED) {
-                    // SCO dropped (phone call ended, etc.) — re-establish after short delay
                     window.decorView.postDelayed({
                         if (scoActive) {
                             val am = audioManager ?: return@postDelayed
@@ -199,7 +252,7 @@ class MainActivity : FlutterActivity(), MethodChannel.MethodCallHandler {
     }
 
     private fun stopSco(result: MethodChannel.Result) {
-        scoActive = false
+        stopSilenceLoop()
         stopScoMonitor()
         val am = audioManager ?: run {
             result.success(null)
@@ -239,7 +292,7 @@ class MainActivity : FlutterActivity(), MethodChannel.MethodCallHandler {
     }
 
     override fun onDestroy() {
-        scoActive = false
+        stopSilenceLoop()
         stopScoMonitor()
         audioManager?.let {
             it.stopBluetoothSco()
