@@ -4,6 +4,7 @@ import android.Manifest
 import android.bluetooth.BluetoothAdapter
 import android.bluetooth.BluetoothProfile
 import android.content.BroadcastReceiver
+import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
@@ -12,7 +13,12 @@ import android.media.AudioAttributes
 import android.media.AudioFormat
 import android.media.AudioManager
 import android.media.AudioTrack
+import android.media.session.MediaController
+import android.media.session.MediaSessionManager
+import android.media.session.PlaybackState
 import android.os.Build
+import android.service.notification.NotificationListenerService
+import android.view.KeyEvent
 import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
 import io.flutter.embedding.android.FlutterActivity
@@ -22,6 +28,7 @@ import io.flutter.plugin.common.MethodChannel
 
 class MainActivity : FlutterActivity(), MethodChannel.MethodCallHandler {
     private val CHANNEL = "com.btaudiocar/sco"
+    private val MEDIA_CHANNEL = "com.btaudiocar/media"
     private val BT_PERMISSION_REQUEST = 1001
     private var pendingResult: MethodChannel.Result? = null
     private var audioManager: AudioManager? = null
@@ -30,11 +37,16 @@ class MainActivity : FlutterActivity(), MethodChannel.MethodCallHandler {
     private var scoMonitorReceiver: BroadcastReceiver? = null
     private var silenceTrack: AudioTrack? = null
     private var silenceThread: Thread? = null
+    private var mediaMethodChannel: MethodChannel? = null
 
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
         MethodChannel(flutterEngine.dartExecutor.binaryMessenger, CHANNEL)
             .setMethodCallHandler(this)
+        mediaMethodChannel = MethodChannel(flutterEngine.dartExecutor.binaryMessenger, MEDIA_CHANNEL)
+        mediaMethodChannel?.setMethodCallHandler { call, result ->
+            handleMediaCall(call, result)
+        }
         audioManager = getSystemService(Context.AUDIO_SERVICE) as AudioManager
     }
 
@@ -45,6 +57,70 @@ class MainActivity : FlutterActivity(), MethodChannel.MethodCallHandler {
             else -> result.notImplemented()
         }
     }
+
+    // MARK: - Media Controls
+
+    private fun handleMediaCall(call: MethodCall, result: MethodChannel.Result) {
+        when (call.method) {
+            "getNowPlaying" -> getNowPlaying(result)
+            "playPause" -> sendMediaKey(KeyEvent.KEYCODE_MEDIA_PLAY_PAUSE, result)
+            "next" -> sendMediaKey(KeyEvent.KEYCODE_MEDIA_NEXT, result)
+            "previous" -> sendMediaKey(KeyEvent.KEYCODE_MEDIA_PREVIOUS, result)
+            else -> result.notImplemented()
+        }
+    }
+
+    private fun getNowPlaying(result: MethodChannel.Result) {
+        try {
+            val msm = getSystemService(Context.MEDIA_SESSION_SERVICE) as? MediaSessionManager
+            if (msm != null) {
+                // Try to get active sessions (requires notification listener permission)
+                try {
+                    val component = ComponentName(this, NotificationListenerService::class.java)
+                    val controllers = msm.getActiveSessions(component)
+                    val controller = controllers.firstOrNull()
+                    if (controller != null) {
+                        val metadata = controller.metadata
+                        val state = controller.playbackState
+                        result.success(mapOf(
+                            "title" to metadata?.getString(android.media.MediaMetadata.METADATA_KEY_TITLE),
+                            "artist" to metadata?.getString(android.media.MediaMetadata.METADATA_KEY_ARTIST),
+                            "playing" to (state?.state == PlaybackState.STATE_PLAYING)
+                        ))
+                        return
+                    }
+                } catch (_: SecurityException) {
+                    // No notification listener permission - fall through to media key approach
+                }
+            }
+            // Fallback: no info available
+            result.success(mapOf(
+                "title" to null,
+                "artist" to null,
+                "playing" to audioManager?.isMusicActive
+            ))
+        } catch (e: Exception) {
+            result.success(mapOf(
+                "title" to null,
+                "artist" to null,
+                "playing" to false
+            ))
+        }
+    }
+
+    private fun sendMediaKey(keyCode: Int, result: MethodChannel.Result) {
+        val am = audioManager ?: run {
+            result.success(null)
+            return
+        }
+        val downEvent = KeyEvent(KeyEvent.ACTION_DOWN, keyCode)
+        val upEvent = KeyEvent(KeyEvent.ACTION_UP, keyCode)
+        am.dispatchMediaKeyEvent(downEvent)
+        am.dispatchMediaKeyEvent(upEvent)
+        result.success(null)
+    }
+
+    // MARK: - SCO
 
     private fun startSco(result: MethodChannel.Result) {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
@@ -119,7 +195,6 @@ class MainActivity : FlutterActivity(), MethodChannel.MethodCallHandler {
         am.isBluetoothScoOn = true
         am.startBluetoothSco()
 
-        // Timeout 5s
         window.decorView.postDelayed({
             if (!receiverFired) {
                 receiverFired = true
@@ -145,9 +220,9 @@ class MainActivity : FlutterActivity(), MethodChannel.MethodCallHandler {
         }, 5000)
     }
 
-    // Play silence on STREAM_VOICE_CALL to keep SCO channel alive
     private fun startSilenceLoop() {
         stopSilenceLoop()
+        scoActive = true
         val sampleRate = 8000
         val bufferSize = AudioTrack.getMinBufferSize(
             sampleRate,
