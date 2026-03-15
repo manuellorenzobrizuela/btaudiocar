@@ -39,6 +39,7 @@ class _HomeScreenState extends State<HomeScreen> {
   bool _loading = false;
   String _status = 'Desactivado';
   String? _deviceName;
+  String? _codec;
 
   // Media info
   String? _mediaTitle;
@@ -56,6 +57,7 @@ class _HomeScreenState extends State<HomeScreen> {
           _scoEnabled = false;
           _status = 'Desactivado';
           _deviceName = null;
+          _codec = null;
           _mediaTitle = null;
           _mediaArtist = null;
           _mediaPlaying = false;
@@ -66,7 +68,8 @@ class _HomeScreenState extends State<HomeScreen> {
         if (success) {
           setState(() {
             _scoEnabled = true;
-            _status = 'Audio SCO activo';
+            _codec = result?['codec'] as String?;
+            _status = _codec != null ? 'Audio HFP activo ($_codec)' : 'Audio HFP activo';
             _deviceName = result?['deviceName'] as String?;
           });
           _startMediaPolling();
