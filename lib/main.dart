@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:io' show Platform;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
@@ -41,11 +42,13 @@ class _HomeScreenState extends State<HomeScreen> {
   String? _deviceName;
   String? _codec;
 
-  // Media info
+  // Media info (Android only - iOS has no cross-app media API)
   String? _mediaTitle;
   String? _mediaArtist;
   bool _mediaPlaying = false;
   Timer? _mediaTimer;
+
+  bool get _isAndroid => Platform.isAndroid;
 
   Future<void> _toggleSco() async {
     setState(() => _loading = true);
@@ -69,10 +72,14 @@ class _HomeScreenState extends State<HomeScreen> {
           setState(() {
             _scoEnabled = true;
             _codec = result?['codec'] as String?;
-            _status = _codec != null ? 'Audio HFP activo ($_codec)' : 'Audio HFP activo';
+            _status = _codec != null
+                ? 'Audio HFP activo ($_codec)'
+                : 'Audio HFP activo';
             _deviceName = result?['deviceName'] as String?;
           });
-          _startMediaPolling();
+          if (_isAndroid) {
+            _startMediaPolling();
+          }
         } else {
           final error = result?['error'] as String? ?? 'Error desconocido';
           setState(() => _status = error);
@@ -109,7 +116,6 @@ class _HomeScreenState extends State<HomeScreen> {
   Future<void> _mediaCommand(String command) async {
     try {
       await _mediaChannel.invokeMethod(command);
-      // Refresh info after command
       await Future.delayed(const Duration(milliseconds: 300));
       _fetchMediaInfo();
     } catch (_) {}
@@ -198,7 +204,7 @@ class _HomeScreenState extends State<HomeScreen> {
                 Text(
                   _status,
                   style: TextStyle(
-                    fontSize: 18,
+                    fontSize: 16,
                     fontWeight: FontWeight.w500,
                     color: _scoEnabled ? Colors.greenAccent : Colors.grey[400],
                   ),
@@ -226,8 +232,8 @@ class _HomeScreenState extends State<HomeScreen> {
 
                 const SizedBox(height: 32),
 
-                // Media controls (always visible when SCO active)
-                if (_scoEnabled) ...[
+                // Media controls - Android only (has cross-app MediaSession API)
+                if (_scoEnabled && _isAndroid) ...[
                   Container(
                     padding: const EdgeInsets.all(20),
                     decoration: BoxDecoration(
@@ -236,7 +242,6 @@ class _HomeScreenState extends State<HomeScreen> {
                     ),
                     child: Column(
                       children: [
-                        // Now playing info
                         Icon(
                           Icons.music_note,
                           size: 20,
@@ -246,7 +251,7 @@ class _HomeScreenState extends State<HomeScreen> {
                         ),
                         const SizedBox(height: 8),
                         Text(
-                          _mediaTitle ?? 'Sin reproducción',
+                          _mediaTitle ?? 'Sin reproduccion',
                           style: TextStyle(
                             fontSize: 16,
                             fontWeight: FontWeight.w600,
@@ -272,14 +277,13 @@ class _HomeScreenState extends State<HomeScreen> {
                           ),
                         ],
                         const SizedBox(height: 20),
-
-                        // Transport controls
                         Row(
                           mainAxisAlignment: MainAxisAlignment.center,
                           children: [
                             IconButton(
                               onPressed: () => _mediaCommand('previous'),
-                              icon: const Icon(Icons.skip_previous_rounded),
+                              icon:
+                                  const Icon(Icons.skip_previous_rounded),
                               iconSize: 40,
                               color: Colors.white,
                             ),
@@ -287,10 +291,12 @@ class _HomeScreenState extends State<HomeScreen> {
                             Container(
                               decoration: BoxDecoration(
                                 shape: BoxShape.circle,
-                                color: Colors.white.withValues(alpha: 0.15),
+                                color:
+                                    Colors.white.withValues(alpha: 0.15),
                               ),
                               child: IconButton(
-                                onPressed: () => _mediaCommand('playPause'),
+                                onPressed: () =>
+                                    _mediaCommand('playPause'),
                                 icon: Icon(
                                   _mediaPlaying
                                       ? Icons.pause_rounded
@@ -315,6 +321,34 @@ class _HomeScreenState extends State<HomeScreen> {
                   const SizedBox(height: 24),
                 ],
 
+                // iOS: simple hint when active
+                if (_scoEnabled && !_isAndroid) ...[
+                  Container(
+                    padding: const EdgeInsets.all(20),
+                    decoration: BoxDecoration(
+                      color: Colors.white.withValues(alpha: 0.07),
+                      borderRadius: BorderRadius.circular(16),
+                    ),
+                    child: Row(
+                      children: [
+                        Icon(Icons.music_note, size: 24,
+                            color: Colors.greenAccent.withValues(alpha: 0.7)),
+                        const SizedBox(width: 12),
+                        Expanded(
+                          child: Text(
+                            'Abre Spotify u otra app de musica.\nEl audio saldra por los altavoces del coche.',
+                            style: TextStyle(
+                              fontSize: 14,
+                              color: Colors.grey[300],
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                  const SizedBox(height: 24),
+                ],
+
                 // Info box
                 Container(
                   padding: const EdgeInsets.all(16),
@@ -324,14 +358,17 @@ class _HomeScreenState extends State<HomeScreen> {
                   ),
                   child: Column(
                     children: [
-                      _infoRow(
-                          Icons.bluetooth, 'Usa el perfil HFP (manos libres)'),
+                      _infoRow(Icons.bluetooth,
+                          'Usa el perfil HFP (manos libres)'),
                       const SizedBox(height: 8),
-                      _infoRow(
-                          Icons.volume_up, 'Audio mono, calidad de llamada'),
+                      _infoRow(Icons.volume_up,
+                          'Audio mono, calidad de llamada'),
+                      const SizedBox(height: 8),
+                      _infoRow(Icons.phone_callback,
+                          'Las llamadas entran normal'),
                       const SizedBox(height: 8),
                       _infoRow(Icons.music_note,
-                          'Pon tu app de música y sonará por los altavoces del coche'),
+                          'Pon tu app de musica y sonara por el coche'),
                     ],
                   ),
                 ),
