@@ -4,7 +4,6 @@ import AVFoundation
 
 class SceneDelegate: FlutterSceneDelegate {
   private var scoChannel: FlutterMethodChannel?
-  private var mediaChannel: FlutterMethodChannel?
   private var silencePlayer: AVAudioPlayer?
   private var routeChangeObserver: NSObjectProtocol?
   private var interruptionObserver: NSObjectProtocol?
@@ -24,12 +23,6 @@ class SceneDelegate: FlutterSceneDelegate {
         binaryMessenger: controller.binaryMessenger
       )
       scoChannel?.setMethodCallHandler(handleScoCall)
-
-      mediaChannel = FlutterMethodChannel(
-        name: "com.btaudiocar/media",
-        binaryMessenger: controller.binaryMessenger
-      )
-      mediaChannel?.setMethodCallHandler(handleMediaCall)
     }
   }
 
@@ -272,25 +265,4 @@ class SceneDelegate: FlutterSceneDelegate {
     }
   }
 
-  // MARK: - Media (iOS: limited - no cross-app API)
-
-  private func handleMediaCall(_ call: FlutterMethodCall, result: @escaping FlutterResult) {
-    switch call.method {
-    case "getNowPlaying":
-      // iOS has no public API to read now playing from third-party apps (Spotify, etc.)
-      // Only isOtherAudioPlaying is available
-      let session = AVAudioSession.sharedInstance()
-      result([
-        "title": NSNull(),
-        "artist": NSNull(),
-        "playing": session.isOtherAudioPlaying
-      ])
-    case "playPause", "next", "previous":
-      // iOS has no public API to control third-party media apps
-      // User must control from Spotify/music app or Control Center
-      result(nil)
-    default:
-      result(FlutterMethodNotImplemented)
-    }
-  }
 }
